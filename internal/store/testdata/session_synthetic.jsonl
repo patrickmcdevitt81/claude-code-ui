@@ -1,0 +1,5 @@
+{"type":"file-history-snapshot","timestamp":"2026-06-01T10:00:00.000Z","sessionId":"synth-session-001","cwd":"/Users/test/myproject"}
+{"type":"attachment","timestamp":"2026-06-01T10:00:01.000Z","sessionId":"synth-session-001","cwd":"/Users/test/myproject"}
+{"type":"assistant","timestamp":"2026-06-01T10:00:02.000Z","sessionId":"synth-session-001","gitBranch":"main","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/Users/test/myproject/main.go","old_string":"foo","new_string":"bar"}}]}}
+{"type":"user","timestamp":"2026-06-01T10:00:03.000Z","sessionId":"synth-session-001","content":[{"type":"tool_result","tool_use_id":"toolu_01","is_error":true,"content":"Error: file not found"}]}
+{"type":"assistant","timestamp":"2026-06-01T10:00:04.000Z","sessionId":"synth-session-001","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":75,"cache_read_input_tokens":10,"cache_creation_input_tokens":5},"content":[{"type":"text","text":"I see the issue, let me try a different approach."}]}}

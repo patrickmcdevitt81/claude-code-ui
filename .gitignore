@@ -1,0 +1,14 @@
+# Go
+/cockpit
+/bin/
+*.test
+*.out
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test fixtures containing real session data from ~/.claude (never commit these)
+internal/store/testdata/session.jsonl
+internal/store/testdata/session_truncated.jsonl

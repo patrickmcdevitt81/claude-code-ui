@@ -1,0 +1,3 @@
+[2026-05-27 10:53:39.231] Hook called with args: ['security_reminder_hook.py']
+[2026-05-27 10:54:21.095] Processing: hook_event=PostToolUse, tool=Bash
+not a valid timestamp line
