@@ -17,26 +17,31 @@ func renderHelp(termWidth int) string {
 	if boxWidth < 40 {
 		boxWidth = 40 // absolute minimum
 	}
+
 	helpStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 2).
 		Width(boxWidth).
-		BorderForeground(lipgloss.Color("240"))
+		Background(colorPanel).
+		BorderForeground(colorBorder)
+
+	accent := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(colorTextMuted)
 
 	var sb strings.Builder
 
 	section := func(title string) {
 		sb.WriteString("\n")
-		sb.WriteString(styleHeader.Render(title) + "\n")
+		sb.WriteString(sectionLabel(title) + "\n")
 	}
 
 	row := func(key, desc string) {
 		// Use lipgloss width so ANSI escapes don't confuse column padding.
-		keyCol := lipgloss.NewStyle().Width(22).Render(styleCost.Render(key))
-		sb.WriteString(fmt.Sprintf("  %s  %s\n", keyCol, styleDim.Render(desc)))
+		keyCol := lipgloss.NewStyle().Width(28).Render(accent.Render(key))
+		sb.WriteString(fmt.Sprintf("  %s  %s\n", keyCol, dim.Render(desc)))
 	}
 
-	sb.WriteString(styleHeader.Render("KEYBINDINGS") + "\n")
+	sb.WriteString(accent.Render("KEYBINDINGS") + "\n")
 
 	section("GLOBAL")
 	row("q / ctrl+c", "quit")

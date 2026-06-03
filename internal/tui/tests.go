@@ -21,13 +21,14 @@ func doTestPoll() tea.Cmd {
 	})
 }
 
-// stylePass is green — reuse theme colours.
+// stylePass / styleFail reuse theme semantic colours.
 var (
 	stylePass = lipgloss.NewStyle().Foreground(colorGreen)
 	styleFail = lipgloss.NewStyle().Foreground(colorRed)
 )
 
-// renderTests builds the Tests view string.
+// renderTests builds the tests-view body string.
+// The header chrome and keybinding footer are provided by model.View().
 func renderTests(m Model) string {
 	w := m.width
 	if w < 72 {
@@ -36,10 +37,12 @@ func renderTests(m Model) string {
 
 	var sb strings.Builder
 
-	// ── Header box ─────────────────────────────────────────────────────────────
-	watchIndicator := styleDim.Render("○ idle")
+	// ── Summary line ─────────────────────────────────────────────────────────
+	var watchIndicator string
 	if m.runner != nil && m.runner.IsWatching() {
-		watchIndicator = styleBusy.Render("● WATCHING")
+		watchIndicator = styleBusy.Render(frame(spinnerFrames, m.animFrame) + " watching")
+	} else {
+		watchIndicator = styleDim.Render("○ idle")
 	}
 
 	var lastRunStr string
@@ -57,23 +60,21 @@ func renderTests(m Model) string {
 		}
 	}
 
-	headerContent := fmt.Sprintf(" %s   %s   %s   %s   %s ",
-		styleHeader.Render("TESTS"),
-		styleDim.Render(m.testCWD),
-		styleDim.Render(testCmd),
+	summary := fmt.Sprintf("  %s   %s   %s   %s",
+		sectionLabel(truncate(m.testCWD, 40)),
+		styleDim.Render(truncate(testCmd, 24)),
 		watchIndicator,
 		styleDim.Render(lastRunStr),
 	)
-	sb.WriteString(styleBorder.Width(w-4).Render(headerContent))
-	sb.WriteString("\n\n")
+	sb.WriteString(summary + "\n\n")
 
-	// ── Directory input (shown when d is pressed) ───────────────────────────
+	// ── Directory input (shown when d is pressed) ────────────────────────────
 	if m.testChangingDir {
 		sb.WriteString(fmt.Sprintf("  Change test directory: [%s]  enter to confirm, esc to cancel\n\n",
 			m.testDirInput.View()))
 	}
 
-	// ── Last run ────────────────────────────────────────────────────────────
+	// ── Last run ─────────────────────────────────────────────────────────────
 	if m.runnerResult != nil {
 		res := m.runnerResult
 		ts := res.StartedAt.Format("2006-01-02 15:04:05")
@@ -96,9 +97,9 @@ func renderTests(m Model) string {
 
 	sb.WriteString("\n")
 
-	// ── History ─────────────────────────────────────────────────────────────
+	// ── History ──────────────────────────────────────────────────────────────
 	if len(m.runHistory) > 0 {
-		sb.WriteString(styleHeader.Render("  HISTORY") +
+		sb.WriteString(sectionLabel("  HISTORY") +
 			styleDim.Render(fmt.Sprintf(" (last %d runs)", len(m.runHistory))) + "\n")
 
 		for _, res := range m.runHistory {
@@ -119,12 +120,10 @@ func renderTests(m Model) string {
 		sb.WriteString("\n")
 	}
 
-	// ── Footer ───────────────────────────────────────────────────────────────
-	sep := strings.Repeat("─", w)
-	sb.WriteString(styleDim.Render(sep) + "\n")
-	sb.WriteString(styleDim.Render(
-		"  w watch   r run   d change dir   tab next view   1 dash   2 agents   q quit",
-	) + "\n")
+	// Keep w referenced to avoid "declared and not used" if the body shrinks.
+	_ = w
+
+	sb.WriteString("\n")
 
 	return sb.String()
 }

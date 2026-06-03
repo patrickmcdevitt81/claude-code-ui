@@ -57,10 +57,10 @@ func lookupSession(a *agent.Agent, m Model) *sessionInfo {
 	for i := range m.sessions {
 		if m.sessions[i].SessionID == sid {
 			return &sessionInfo{
-				model:      m.sessions[i].Model,
-				costUSD:    m.sessions[i].CostUSD,
-				inTokens:   m.sessions[i].TotalInputTokens,
-				outTokens:  m.sessions[i].TotalOutputTokens,
+				model:     m.sessions[i].Model,
+				costUSD:   m.sessions[i].CostUSD,
+				inTokens:  m.sessions[i].TotalInputTokens,
+				outTokens: m.sessions[i].TotalOutputTokens,
 			}
 		}
 	}
@@ -98,14 +98,15 @@ func sortedAgents(agents []*agent.Agent) []*agent.Agent {
 
 // Styles used only in the agents view.
 var (
-	styleDead     = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	styleDead = lipgloss.NewStyle().Foreground(colorRed)
 	styleSelected = lipgloss.NewStyle().
-			Background(lipgloss.Color("237")).
-			Foreground(lipgloss.Color("255"))
-	styleNewRow = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+			Background(colorBorderActive).
+			Foreground(colorAccent)
+	styleNewRow = lipgloss.NewStyle().Foreground(colorGreen)
 )
 
-// renderAgents builds the full agents-view string.
+// renderAgents builds the agents-view body string.
+// The header chrome and keybinding footer are provided by model.View().
 func renderAgents(m Model) string {
 	w := m.width
 	if w < 72 {
@@ -135,26 +136,34 @@ func renderAgents(m Model) string {
 
 	var sb strings.Builder
 
-	// ── Header box ─────────────────────────────────────────────────────────────
-	summary := fmt.Sprintf(" %d running  │  %d idle  │  $%.2f session cost",
-		busyCount, idleCount, totalCost)
-	sb.WriteString(styleBorder.Width(w - 4).Render(
-		styleHeader.Render("─ MISSION CONTROL") + "  " + summary,
-	))
-	sb.WriteString("\n\n")
+	// ── Summary line ───────────────────────────────────────────────────────────
+	summary := fmt.Sprintf("  %s   %s   %s",
+		styleBusy.Render(fmt.Sprintf("%d running", busyCount)),
+		styleDim.Render(fmt.Sprintf("%d idle", idleCount)),
+		styleCost.Render(fmt.Sprintf("$%.2f session cost", totalCost)),
+	)
+	sb.WriteString(summary + "\n\n")
 
 	// ── Column header ──────────────────────────────────────────────────────────
 	colHeader := fmt.Sprintf("  %-8s  %-10s  %-30s  %-8s  %-20s",
 		"ID", "STATUS", "CWD", "COST", "SESSION")
-	sb.WriteString(styleDim.Render(colHeader) + "\n")
+	sb.WriteString(sectionLabel(colHeader) + "\n")
 
 	// ── Agent rows ─────────────────────────────────────────────────────────────
 	for i, a := range agents {
 		status := classifyAgent(a, m)
 		si := lookupSession(a, m)
 
-		// Raw (no-ANSI) status strings for correct width math in Sprintf.
-		statusEmoji := map[agentStatus]string{statusBusy: "●", statusIdle: "○", statusDead: "✕"}[status]
+		// Animated spinner for busy agents; static symbols for idle/dead.
+		var statusEmoji string
+		switch status {
+		case statusBusy:
+			statusEmoji = frame(spinnerFrames, m.animFrame)
+		case statusIdle:
+			statusEmoji = "○"
+		default:
+			statusEmoji = "✕"
+		}
 		statusWord := map[agentStatus]string{statusBusy: "BUSY ", statusIdle: "IDLE ", statusDead: "DEAD "}[status]
 
 		idShort := a.ID
@@ -185,7 +194,7 @@ func renderAgents(m Model) string {
 			case statusBusy:
 				renderedLine = styleBusy.Render(rawLine)
 			case statusDead:
-				renderedLine = styleError.Render(rawLine)
+				renderedLine = styleDead.Render(rawLine)
 			default:
 				renderedLine = styleDim.Render(rawLine)
 			}
@@ -231,19 +240,14 @@ func renderAgents(m Model) string {
 		sb.WriteString(styleDim.Render("  (select an agent row to see details; L to launch)") + "\n")
 	}
 
-	// ── Launch input (shown when L is pressed) ──────────────────────────────
+	// ── Launch input (shown when L is pressed) ─────────────────────────────────
 	if m.launching {
 		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("  Launch agent in: [%s]  enter to confirm, esc to cancel\n",
 			m.launchInput.View()))
 	}
 
-	// ── Separator + footer ──────────────────────────────────────────────────────
 	sb.WriteString("\n")
-	sb.WriteString(styleDim.Render(strings.Repeat("─", w)) + "\n")
-	sb.WriteString(styleDim.Render(
-		"  ↑/↓ select   f focus   K kill   L launch   tab → dashboard   1 dash   2 agents   q quit",
-	) + "\n")
 
 	return sb.String()
 }

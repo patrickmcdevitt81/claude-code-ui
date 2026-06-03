@@ -9,7 +9,8 @@ import (
 	"cockpit/internal/store"
 )
 
-// renderSessions builds the Sessions view string.
+// renderSessions builds the sessions-view body string.
+// The header chrome and keybinding footer are provided by model.View().
 func renderSessions(m Model) string {
 	w := m.width
 	if w < 72 {
@@ -18,7 +19,7 @@ func renderSessions(m Model) string {
 
 	var sb strings.Builder
 
-	// ── Header box ──────────────────────────────────────────────────────────────
+	// ── Summary line ─────────────────────────────────────────────────────────
 	totalCost := 0.0
 	costByProject := map[string]float64{}
 	for _, s := range m.allSessions {
@@ -48,7 +49,7 @@ func renderSessions(m Model) string {
 		costSummary = "$0.00"
 	}
 
-	// Build search display
+	// Build search display.
 	var searchDisplay string
 	if m.sessionSearching {
 		searchDisplay = fmt.Sprintf("search: [%s]", m.sessionInput.View())
@@ -58,22 +59,20 @@ func renderSessions(m Model) string {
 		searchDisplay = "/ to search"
 	}
 
-	headerContent := fmt.Sprintf(" %s  │  %d total   %s  │  %s ",
-		styleHeader.Render("SESSIONS"),
-		len(m.allSessions),
-		styleCost.Render(costSummary),
+	summary := fmt.Sprintf("  %s   %s   %s",
+		sectionLabel(fmt.Sprintf("%d sessions  $%.2f total", len(m.allSessions), totalCost)),
+		styleCost.Render(truncate(costSummary, 40)),
 		styleDim.Render(searchDisplay),
 	)
-	sb.WriteString(styleBorder.Width(w-4).Render(headerContent))
-	sb.WriteString("\n\n")
+	sb.WriteString(summary + "\n\n")
 
-	// ── Column header ────────────────────────────────────────────────────────────
+	// ── Column header ─────────────────────────────────────────────────────────
 	colHeader := fmt.Sprintf("  %-12s  %-16s  %-22s  %-7s  %-5s  %s",
 		"PROJECT", "DATE", "MODEL", "COST", "EDITS", "MSGS",
 	)
-	sb.WriteString(styleDim.Render(colHeader) + "\n")
+	sb.WriteString(sectionLabel(colHeader) + "\n")
 
-	// ── Session rows ─────────────────────────────────────────────────────────────
+	// ── Session rows ──────────────────────────────────────────────────────────
 	sessions := m.filteredSessions
 	maxVisible := 10
 	if len(sessions) < maxVisible {
@@ -98,11 +97,11 @@ func renderSessions(m Model) string {
 		s := sessions[i]
 		proj := truncate(projectShortName(s.ProjectPath), 12)
 		ts := s.UpdatedAt.Format("2006-01-02 15:04")
-		model := truncate(s.Model, 22)
+		modelStr := truncate(s.Model, 22)
 		costStr := fmt.Sprintf("$%.2f", s.CostUSD)
 
 		rawLine := fmt.Sprintf("  %-12s  %-16s  %-22s  %-7s  %-5d  %d",
-			proj, ts, model, costStr, s.EditCount, s.MessageCount,
+			proj, ts, modelStr, costStr, s.EditCount, s.MessageCount,
 		)
 
 		if i == m.selectedSessionIdx {
@@ -123,7 +122,7 @@ func renderSessions(m Model) string {
 
 	sb.WriteString("\n")
 
-	// ── Detail pane for selected session ────────────────────────────────────────
+	// ── Detail pane for selected session ──────────────────────────────────────
 	sb.WriteString(styleDim.Render(strings.Repeat("─", w)) + "\n")
 
 	if m.selectedSessionIdx < len(sessions) {
@@ -155,22 +154,22 @@ func renderSessions(m Model) string {
 		sb.WriteString("\n")
 
 		// Recent edits from the pre-loaded list (capped at 5 in model).
-		sb.WriteString(styleHeader.Render("  RECENT EDITS:") + "\n")
+		sb.WriteString(sectionLabel("  RECENT EDITS:") + "\n")
 		if len(m.sessionEdits) == 0 {
 			sb.WriteString(styleDim.Render("  (none)") + "\n")
 		}
 		for _, e := range m.sessionEdits {
-			ts := e.Timestamp.Format("15:04:05")
+			ets := e.Timestamp.Format("15:04:05")
 			fp := truncate(e.FilePath, w-30)
 			line := fmt.Sprintf("  %s  %-6s  %s",
-				styleDim.Render(ts),
+				styleDim.Render(ets),
 				e.ToolName,
 				fp,
 			)
 			sb.WriteString(line + "\n")
 		}
 
-		// Error count summary
+		// Error count summary.
 		if s.ErrorCount > 0 {
 			sb.WriteString("\n")
 			sb.WriteString(styleError.Render(fmt.Sprintf("  ERRORS: %d tool errors in this session", s.ErrorCount)) + "\n")
@@ -181,17 +180,10 @@ func renderSessions(m Model) string {
 
 	sb.WriteString("\n")
 
-	// ── Error banner (shown when resume or other operations fail) ────────────────
+	// ── Error banner (shown when resume or other operations fail) ─────────────
 	if m.loadErr != nil {
 		sb.WriteString(styleError.Render(fmt.Sprintf("  ERROR: %s", m.loadErr.Error())) + "\n\n")
 	}
-
-	// ── Footer ───────────────────────────────────────────────────────────────────
-	sep := strings.Repeat("─", w)
-	sb.WriteString(styleDim.Render(sep) + "\n")
-	sb.WriteString(styleDim.Render(
-		"  ↑/↓ select   / search   enter resume   tab next view   q quit",
-	) + "\n")
 
 	return sb.String()
 }

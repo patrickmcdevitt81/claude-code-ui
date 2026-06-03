@@ -4,6 +4,7 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
@@ -29,6 +30,16 @@ const (
 // agentBlurMsg is sent when the user detaches from a focused agent (e.g. the
 // PTY copy loop ends because the agent exited or stdin closed).
 type agentBlurMsg struct{}
+
+// animTickMsg is sent every 150 ms to drive spinner and logo animations.
+type animTickMsg struct{}
+
+// doAnimTick returns a Bubble Tea command that fires animTickMsg after 150 ms.
+func doAnimTick() tea.Cmd {
+	return tea.Tick(150*time.Millisecond, func(_ time.Time) tea.Msg {
+		return animTickMsg{}
+	})
+}
 
 // Model is the top-level Bubble Tea model for the Cockpit TUI.
 type Model struct {
@@ -76,6 +87,9 @@ type Model struct {
 
 	// help overlay
 	showHelp bool
+
+	// animation — incremented every 150 ms by animTickMsg
+	animFrame int
 }
 
 // New creates a new Cockpit TUI model with the given claude binary path, data
@@ -210,9 +224,9 @@ func (m *Model) focusAgent(id string) tea.Cmd {
 	})
 }
 
-// Init implements tea.Model. Loads initial data.
+// Init implements tea.Model. Starts the animation ticker.
 func (m Model) Init() tea.Cmd {
-	return nil
+	return doAnimTick()
 }
 
 // Update implements tea.Model.
@@ -556,6 +570,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The user detached from the focused agent — resume normal TUI rendering.
 		m.focusedID = ""
 
+	case animTickMsg:
+		m.animFrame++
+		return m, doAnimTick()
+
 	case testPollMsg:
 		// Check whether the runner has a new result.
 		if m.runner != nil {
@@ -597,14 +615,40 @@ func (m Model) renderCurrentView() string {
 }
 
 // View implements tea.Model.
+// The screen is composed of three chrome rows (top bar, tab strip, status bar)
+// surrounding a body area that is capped to the remaining terminal height.
 func (m Model) View() string {
-	base := m.renderCurrentView()
+	w := m.width
+	if w < 72 {
+		w = 72
+	}
+	h := m.height
+	if h < 10 {
+		h = 10
+	}
+
+	// Chrome rows: top bar (1) + tab strip (1) + status bar (1) = 3 rows.
+	const chromeRows = 3
+	bodyH := h - chromeRows
+	if bodyH < 1 {
+		bodyH = 1
+	}
+
+	topBar := renderTopBar(m, w)
+	tabStrip := renderTabStrip(m, w)
+	statusBar := renderStatusBar(m, w)
+
+	// Render, crop, and pad the view body.
+	body := cropBody(m.renderCurrentView(), w, bodyH, colorPanel)
+
+	full := topBar + "\n" + tabStrip + "\n" + body + "\n" + statusBar
+
 	if m.showHelp {
-		return lipgloss.Place(m.width, m.height,
+		return lipgloss.Place(w, h,
 			lipgloss.Center, lipgloss.Center,
-			renderHelp(m.width),
+			renderHelp(w),
 			lipgloss.WithWhitespaceChars(" "),
 		)
 	}
-	return base
+	return full
 }
