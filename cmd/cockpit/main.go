@@ -63,11 +63,17 @@ func run() error {
 		return err
 	}
 
+	// --- Resolve working directory (default launch dir for new agents) ---
+	workDir, err := os.Getwd()
+	if err != nil {
+		workDir = claudeDir // fallback: data dir is better than nothing
+	}
+
 	// --- Create agent manager ---
 	mgr := agent.NewManager(claudePath, claudeDir)
 
 	// --- Launch TUI ---
-	model := tui.New(claudePath, claudeDir, mgr)
+	model := tui.New(claudePath, claudeDir, workDir, mgr)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	// Start the file watcher. If it fails, log a warning and continue without

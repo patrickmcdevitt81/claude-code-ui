@@ -21,18 +21,16 @@ const (
 
 // classifyAgent determines whether agent a is BUSY, IDLE, or DEAD.
 //
-// - DEAD : the done channel is already closed (process exited).
-// - BUSY : the agent's session ID appears in m.processes with status=="busy".
-// - IDLE : alive but not currently processing a prompt.
+//   - DEAD : the done channel is already closed (process exited).
+//   - BUSY : the agent's session ID appears in m.processes with status=="busy".
+//   - IDLE : alive but not currently processing a prompt.
 func classifyAgent(a *agent.Agent, m Model) agentStatus {
-	// Check if the process has already exited.
 	select {
 	case <-a.Wait():
 		return statusDead
 	default:
 	}
 
-	// Look up session in live processes.
 	sid := a.GetSessionID()
 	if sid != "" {
 		for _, p := range m.processes {
@@ -44,11 +42,10 @@ func classifyAgent(a *agent.Agent, m Model) agentStatus {
 			}
 		}
 	}
-	// Alive but session not yet detected (or process idle).
 	return statusIdle
 }
 
-// lookupSession returns the store.Session for an agent, or nil if not found.
+// lookupSession returns the store.Session info for an agent, or nil.
 func lookupSession(a *agent.Agent, m Model) *sessionInfo {
 	sid := a.GetSessionID()
 	if sid == "" {
@@ -85,8 +82,7 @@ func formatTokens(n int64) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// sortedAgents returns the agent list in a stable order (by ID) so that
-// row indices are deterministic across renders.
+// sortedAgents returns the agent list in a stable order (by ID).
 func sortedAgents(agents []*agent.Agent) []*agent.Agent {
 	out := make([]*agent.Agent, len(agents))
 	copy(out, agents)
@@ -106,7 +102,6 @@ var (
 )
 
 // renderAgents builds the agents-view body string.
-// The header chrome and keybinding footer are provided by model.View().
 func renderAgents(m Model) string {
 	w := m.width
 	if w < 72 {
@@ -119,8 +114,7 @@ func renderAgents(m Model) string {
 	}
 
 	// ── Tally ──────────────────────────────────────────────────────────────────
-	busyCount := 0
-	idleCount := 0
+	busyCount, idleCount := 0, 0
 	totalCost := 0.0
 	for _, a := range agents {
 		switch classifyAgent(a, m) {
@@ -136,54 +130,81 @@ func renderAgents(m Model) string {
 
 	var sb strings.Builder
 
-	// ── Summary line ───────────────────────────────────────────────────────────
-	summary := fmt.Sprintf("  %s   %s   %s",
+	// ── Summary bar ────────────────────────────────────────────────────────────
+	summaryParts := fmt.Sprintf("  %s  %s  %s",
 		styleBusy.Render(fmt.Sprintf("%d running", busyCount)),
 		styleDim.Render(fmt.Sprintf("%d idle", idleCount)),
 		styleCost.Render(fmt.Sprintf("$%.2f session cost", totalCost)),
 	)
-	sb.WriteString(summary + "\n\n")
+	if m.focusedID != "" {
+		summaryParts += "  " + styleAmber.Render("● attached")
+	}
+	sb.WriteString(summaryParts + "\n\n")
 
 	// ── Column header ──────────────────────────────────────────────────────────
-	colHeader := fmt.Sprintf("  %-8s  %-10s  %-30s  %-8s  %-20s",
-		"ID", "STATUS", "CWD", "COST", "SESSION")
-	sb.WriteString(sectionLabel(colHeader) + "\n")
+	const (
+		cID  = 6
+		cSt  = 5
+		cUp  = 5
+		cCWD = 32
+		cCst = 7
+		cSes = 16
+	)
+	hdr := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %s",
+		cID, "ID",
+		cSt, "STATE",
+		cUp, "UP",
+		cCWD, "WORKING DIR",
+		cCst, "COST",
+		"MODEL/SESSION",
+	)
+	sb.WriteString(sectionLabel(hdr) + "\n")
+	sb.WriteString(styleDim.Render("  "+strings.Repeat("─", w-4)) + "\n")
 
 	// ── Agent rows ─────────────────────────────────────────────────────────────
 	for i, a := range agents {
 		status := classifyAgent(a, m)
 		si := lookupSession(a, m)
 
-		// Animated spinner for busy agents; static symbols for idle/dead.
-		var statusEmoji string
+		idShort := a.ID
+		if len(idShort) > cID {
+			idShort = idShort[:cID]
+		}
+
+		var stateWord string
 		switch status {
 		case statusBusy:
-			statusEmoji = frame(spinnerFrames, m.animFrame)
+			stateWord = frame(spinnerFrames, m.animFrame) + "RUN"
 		case statusIdle:
-			statusEmoji = "○"
+			stateWord = "○IDL"
 		default:
-			statusEmoji = "✕"
-		}
-		statusWord := map[agentStatus]string{statusBusy: "BUSY ", statusIdle: "IDLE ", statusDead: "DEAD "}[status]
-
-		idShort := a.ID
-		if len(idShort) > 6 {
-			idShort = idShort[:6]
+			stateWord = "✕END"
 		}
 
-		cwdTrunc := truncate(a.CWD, 30)
+		uptime := a.UptimeStr()
+		cwdShort := truncate(a.CWD, cCWD)
 
 		costStr := "─"
-		modelStr := "─"
+		sessStr := "─"
 		if si != nil {
 			costStr = fmt.Sprintf("$%.2f", si.costUSD)
-			modelStr = truncate(si.model, 20)
+			sessStr = truncate(si.model, cSes)
 		}
 
-		// Build the full line with raw strings so %-Ns pads by visible width,
-		// then apply a single color/highlight to the assembled line.
-		rawLine := fmt.Sprintf("  %-6s  %s %-5s  %-30s  %-8s  %-20s",
-			idShort, statusEmoji, statusWord, cwdTrunc, costStr, modelStr,
+		// Focused indicator appended after session.
+		focusMark := " "
+		if a.ID == m.focusedID {
+			focusMark = "●"
+		}
+
+		rawLine := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s %s",
+			cID, idShort,
+			cSt, stateWord,
+			cUp, uptime,
+			cCWD, cwdShort,
+			cCst, costStr,
+			cSes, sessStr,
+			focusMark,
 		)
 
 		var renderedLine string
@@ -199,55 +220,69 @@ func renderAgents(m Model) string {
 				renderedLine = styleDim.Render(rawLine)
 			}
 		}
-		sb.WriteString(renderedLine)
-		sb.WriteString("\n")
+		sb.WriteString(renderedLine + "\n")
 	}
 
 	// ── [new] row ──────────────────────────────────────────────────────────────
-	newRowIdx := len(agents)
-	newRowText := "  [new]    + LAUNCH  (press L to launch in a new directory)"
-	if newRowIdx == m.selectedAgentIdx {
+	sb.WriteString(styleDim.Render("  "+strings.Repeat("─", w-4)) + "\n")
+	newRowText := "  [new]   + LAUNCH   press L to launch in a custom directory"
+	if len(agents) == m.selectedAgentIdx {
 		sb.WriteString(styleSelected.Render(newRowText))
 	} else {
 		sb.WriteString(styleNewRow.Render(newRowText))
 	}
 	sb.WriteString("\n")
 
-	// ── Detail pane ────────────────────────────────────────────────────────────
+	// ── Detail pane for selected agent ─────────────────────────────────────────
 	sb.WriteString("\n")
 	if m.selectedAgentIdx < len(agents) {
 		a := agents[m.selectedAgentIdx]
 		si := lookupSession(a, m)
 
-		modelName := "─"
-		inTok := "─"
-		outTok := "─"
+		modelName, inTok, outTok := "─", "─", "─"
 		if si != nil {
 			modelName = si.model
 			inTok = formatTokens(si.inTokens)
 			outTok = formatTokens(si.outTokens)
 		}
 
-		detail := fmt.Sprintf("  AGENT: %s   %s   %s   in_tokens=%s  out_tokens=%s",
-			a.ID[:min6(len(a.ID))],
-			truncate(a.CWD, 40),
-			modelName,
-			inTok,
-			outTok,
+		detail := fmt.Sprintf("  %s %s   %s   %s   in=%s  out=%s",
+			sectionLabel("AGENT:"),
+			styleAmber.Render(a.ID[:min6(len(a.ID))]),
+			styleDim.Render(truncate(a.CWD, 44)),
+			styleDim.Render(modelName),
+			styleCyan.Render(inTok),
+			styleCyan.Render(outTok),
 		)
-		sb.WriteString(styleHeader.Render(detail) + "\n")
+		sb.WriteString(detail + "\n")
 	} else {
-		sb.WriteString(styleDim.Render("  (select an agent row to see details; L to launch)") + "\n")
+		sb.WriteString(styleDim.Render("  select a row to see details") + "\n")
 	}
 
 	// ── Launch input (shown when L is pressed) ─────────────────────────────────
 	if m.launching {
 		sb.WriteString("\n")
-		sb.WriteString(fmt.Sprintf("  Launch agent in: [%s]  enter to confirm, esc to cancel\n",
-			m.launchInput.View()))
+		prompt := fmt.Sprintf("  %s [%s]  enter to confirm, esc to cancel",
+			sectionLabel("launch in:"),
+			m.launchInput.View(),
+		)
+		sb.WriteString(prompt + "\n")
 	}
 
+	// ── Footer hint ────────────────────────────────────────────────────────────
 	sb.WriteString("\n")
+	footerItems := []string{
+		"f focus",
+		"ctrl-] detach",
+		"K kill",
+		"L launch",
+		"↑/↓ navigate",
+	}
+	var footerParts []string
+	for _, item := range footerItems {
+		footerParts = append(footerParts, styleDim.Render(item))
+	}
+	sb.WriteString("  " + strings.Join(footerParts, "  ·  ") + "\n")
 
 	return sb.String()
 }

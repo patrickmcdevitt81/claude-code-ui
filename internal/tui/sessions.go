@@ -71,6 +71,7 @@ func renderSessions(m Model) string {
 		"PROJECT", "DATE", "MODEL", "COST", "EDITS", "MSGS",
 	)
 	sb.WriteString(sectionLabel(colHeader) + "\n")
+	sb.WriteString(styleDim.Render("  "+strings.Repeat("─", w-4)) + "\n")
 
 	// ── Session rows ──────────────────────────────────────────────────────────
 	sessions := m.filteredSessions
@@ -96,7 +97,7 @@ func renderSessions(m Model) string {
 	for i := startIdx; i < endIdx; i++ {
 		s := sessions[i]
 		proj := truncate(projectShortName(s.ProjectPath), 12)
-		ts := s.UpdatedAt.Format("2006-01-02 15:04")
+		ts := s.UpdatedAt.Format("Jan 02 15:04    ")
 		modelStr := truncate(s.Model, 22)
 		costStr := fmt.Sprintf("$%.2f", s.CostUSD)
 
@@ -129,7 +130,7 @@ func renderSessions(m Model) string {
 		s := sessions[m.selectedSessionIdx]
 
 		proj := projectShortName(s.ProjectPath)
-		ts := s.UpdatedAt.Format("2006-01-02 15:04")
+		ts := s.UpdatedAt.Format("Jan 02 15:04    ")
 		costStr := fmt.Sprintf("$%.2f", s.CostUSD)
 		errStr := ""
 		if s.ErrorCount > 0 {
@@ -184,6 +185,14 @@ func renderSessions(m Model) string {
 	if m.loadErr != nil {
 		sb.WriteString(styleError.Render(fmt.Sprintf("  ERROR: %s", m.loadErr.Error())) + "\n\n")
 	}
+
+	// ── Footer hint ────────────────────────────────────────────────────────────
+	footerItems := []string{"↑/↓ navigate", "enter resume", "/ search", "esc clear"}
+	var footerParts []string
+	for _, item := range footerItems {
+		footerParts = append(footerParts, styleDim.Render(item))
+	}
+	sb.WriteString("  " + strings.Join(footerParts, "  ·  ") + "\n")
 
 	return sb.String()
 }

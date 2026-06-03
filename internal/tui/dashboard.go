@@ -208,6 +208,11 @@ func (m Model) buildPriorityItems() []priorityItem {
 	return items
 }
 
+// divider returns a full-width muted horizontal rule for use between sections.
+func divider(w int) string {
+	return styleDim.Render("  " + strings.Repeat("─", w-4))
+}
+
 // renderDashboard builds the dashboard body string for View().
 // The branded header, tab strip, and footer chrome are composed in model.View().
 func (m Model) renderDashboard() string {
@@ -223,6 +228,36 @@ func (m Model) renderDashboard() string {
 		sb.WriteString("\n")
 	}
 
+	sb.WriteString("\n")
+
+	// ── TELEMETRY row ─────────────────────────────────────────────────────────
+	var totalTokensIn, totalTokensOut int64
+	var totalCostAll float64
+	for _, s := range m.allSessions {
+		totalTokensIn += s.TotalInputTokens
+		totalTokensOut += s.TotalOutputTokens
+		totalCostAll += s.CostUSD
+	}
+	agentCount := 0
+	busyCountDash := 0
+	if m.manager != nil {
+		agentCount = len(m.manager.List())
+	}
+	for _, p := range m.processes {
+		if p.Status == "busy" {
+			busyCountDash++
+		}
+	}
+
+	telRow := fmt.Sprintf("  %s   %s   %s   %s   %s",
+		sectionLabel("TELEMETRY"),
+		styleDim.Render("in:")+styleCyan.Render(formatTokens(totalTokensIn)),
+		styleDim.Render("out:")+styleCyan.Render(formatTokens(totalTokensOut)),
+		styleDim.Render("cost:")+styleCost.Render(fmt.Sprintf("$%.2f", totalCostAll)),
+		styleDim.Render("agents:")+styleBusy.Render(fmt.Sprintf("%d/%d", busyCountDash, agentCount)),
+	)
+	sb.WriteString(telRow + "\n")
+	sb.WriteString(divider(w) + "\n")
 	sb.WriteString("\n")
 
 	// ── Claude "C" logo + ⚡ FOCUS NEXT panel ────────────────────────────────
@@ -272,8 +307,10 @@ func (m Model) renderDashboard() string {
 	}
 
 	sb.WriteString("\n")
+	sb.WriteString(divider(w) + "\n")
+	sb.WriteString("\n")
 
-	// ── Projects + Live processes (side by side) ─────────────────────────────
+	// ── PROJECTS + LIVE AGENTS (side by side) ─────────────────────────────────
 	halfW := (w - 4) / 2
 
 	sorted := make([]store.ProjectSummary, len(m.projects))
@@ -305,7 +342,7 @@ func (m Model) renderDashboard() string {
 	}
 
 	var liveLines []string
-	liveLines = append(liveLines, sectionLabel("  LIVE"))
+	liveLines = append(liveLines, sectionLabel("  LIVE AGENTS"))
 	if len(m.processes) == 0 {
 		liveLines = append(liveLines, styleDim.Render("  (no agents running)"))
 	}
@@ -343,9 +380,12 @@ func (m Model) renderDashboard() string {
 	}
 
 	sb.WriteString("\n")
+	sb.WriteString(divider(w) + "\n")
+	sb.WriteString("\n")
 
-	// ── Recent Sessions ───────────────────────────────────────────────────────
-	sb.WriteString(sectionLabel("  RECENT SESSIONS") + styleDim.Render(" (last 5)") + "\n")
+	// ── RECENT SESSIONS ───────────────────────────────────────────────────────
+	sb.WriteString(sectionLabel("  RECENT SESSIONS") +
+		styleDim.Render(fmt.Sprintf("  %d total · press 4 for all", len(m.allSessions))) + "\n")
 	sessions := make([]store.Session, len(m.sessions))
 	copy(sessions, m.sessions)
 	sort.Slice(sessions, func(i, j int) bool {
@@ -359,12 +399,12 @@ func (m Model) renderDashboard() string {
 	}
 	for _, s := range sessions {
 		proj := truncate(projectShortName(s.ProjectPath), 12)
-		ts := s.UpdatedAt.Format("2006-01-02 15:04")
+		ts := s.UpdatedAt.Format("Jan 02 15:04")
 		modelStr := truncate(s.Model, 20)
 		costRaw := fmt.Sprintf("$%.2f", s.CostUSD)
 		recency := ""
 		if time.Since(s.UpdatedAt) < 10*time.Minute {
-			recency = " " + styleBusy.Render("●")
+			recency = "  " + styleBusy.Render("● active")
 		}
 		sb.WriteString(fmt.Sprintf("  %-12s  %s  %-20s  %s  %d edits%s\n",
 			proj, styleDim.Render(ts), styleDim.Render(modelStr),
@@ -372,14 +412,16 @@ func (m Model) renderDashboard() string {
 	}
 
 	sb.WriteString("\n")
+	sb.WriteString(divider(w) + "\n")
+	sb.WriteString("\n")
 
-	// ── Recent Commands ───────────────────────────────────────────────────────
+	// ── RECENT COMMANDS ───────────────────────────────────────────────────────
 	sb.WriteString(sectionLabel("  RECENT COMMANDS") + styleDim.Render(" (last 10)") + "\n")
 	if len(m.history) == 0 {
 		sb.WriteString(styleDim.Render("  (no history)") + "\n")
 	}
 	for _, h := range m.history {
-		ts := h.Timestamp.Format("2006-01-02 15:04")
+		ts := h.Timestamp.Format("Jan 02 15:04")
 		proj := truncate(h.Project, 12)
 		display := truncate(h.Display, w-40)
 		sb.WriteString(fmt.Sprintf("  %s  %-12s  %s\n",
@@ -387,21 +429,23 @@ func (m Model) renderDashboard() string {
 	}
 
 	sb.WriteString("\n")
+	sb.WriteString(divider(w) + "\n")
+	sb.WriteString("\n")
 
-	// ── Issues ────────────────────────────────────────────────────────────────
+	// ── ISSUES ────────────────────────────────────────────────────────────────
 	issues := m.buildIssues(5)
-	sb.WriteString(sectionLabel(fmt.Sprintf("  ISSUES (%d)", len(issues))) + "\n")
+	issueHeader := sectionLabel(fmt.Sprintf("  ISSUES (%d)", len(issues)))
 	if len(issues) == 0 {
-		sb.WriteString(styleMint.Render("  ✓  No issues — looking good") + "\n")
-	} else {
-		for _, iss := range issues {
-			sb.WriteString(fmt.Sprintf("  %s  %s  %-30s  %-8s  %s\n",
-				styleError.Render(iss.icon),
-				styleDim.Render(fmt.Sprintf("%-12s", iss.kind)),
-				truncate(iss.message, w-50),
-				truncate(iss.project, 8),
-				styleDim.Render(iss.timeStr)))
-		}
+		issueHeader += "  " + styleMint.Render("✓ all clear")
+	}
+	sb.WriteString(issueHeader + "\n")
+	for _, iss := range issues {
+		sb.WriteString(fmt.Sprintf("  %s  %-12s  %-30s  %-8s  %s\n",
+			styleError.Render(iss.icon),
+			styleDim.Render(iss.kind),
+			truncate(iss.message, w-54),
+			truncate(iss.project, 8),
+			styleDim.Render(iss.timeStr)))
 	}
 
 	sb.WriteString("\n")

@@ -54,7 +54,8 @@ func renderHelp(termWidth int) string {
 
 	section("AGENTS")
 	row("↑/↓  j/k", "navigate")
-	row("f / enter", "focus selected agent (full PTY passthrough)")
+	row("f / enter", "focus agent — full PTY passthrough to real claude")
+	row("ctrl-]", "detach from focused agent (claude keeps running)")
 	row("K", "kill selected agent")
 	row("L", "launch new agent in custom directory")
 

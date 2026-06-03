@@ -45,6 +45,7 @@ func doAnimTick() tea.Cmd {
 type Model struct {
 	claudePath string
 	claudeDir  string
+	workDir    string // default working directory for new agents (cockpit's cwd)
 	width      int
 	height     int
 
@@ -93,15 +94,15 @@ type Model struct {
 }
 
 // New creates a new Cockpit TUI model with the given claude binary path, data
-// dir, and agent manager.
-func New(claudePath, claudeDir string, mgr *agent.Manager) Model {
+// dir, working dir (default for new agents), and agent manager.
+func New(claudePath, claudeDir, workDir string, mgr *agent.Manager) Model {
 	ti := textinput.New()
-	ti.Placeholder = claudeDir
+	ti.Placeholder = workDir
 	ti.CharLimit = 256
 	ti.Width = 40
 
 	dirInput := textinput.New()
-	dirInput.Placeholder = claudeDir
+	dirInput.Placeholder = workDir
 	dirInput.CharLimit = 256
 	dirInput.Width = 50
 
@@ -113,9 +114,10 @@ func New(claudePath, claudeDir string, mgr *agent.Manager) Model {
 	m := Model{
 		claudePath:   claudePath,
 		claudeDir:    claudeDir,
+		workDir:      workDir,
 		manager:      mgr,
 		launchInput:  ti,
-		testCWD:      claudeDir,
+		testCWD:      workDir,
 		testDirInput: dirInput,
 		sessionInput: sessionIn,
 	}
@@ -210,16 +212,15 @@ func (m *Model) reloadSessionEdits() {
 	m.sessionEdits = edits
 }
 
-// focusAgent suspends Bubble Tea's raw mode and hands the terminal directly to
-// the PTY owned by agent id. When the PTY copy loop finishes (agent exits or
-// ctrl+d), an agentBlurMsg is sent so the TUI resumes normally.
+// focusAgent suspends Bubble Tea's raw mode and hands the terminal to the
+// agent's PTY broker. On detach (ctrl-]) or agent exit, agentBlurMsg is sent
+// so the TUI resumes. The agent keeps running in the background after detach.
 func (m *Model) focusAgent(id string) tea.Cmd {
 	a, ok := m.manager.Get(id)
 	if !ok {
 		return nil
 	}
-	ptmx := a.PTY()
-	return tea.Exec(agent.NewPTYExec(ptmx), func(err error) tea.Msg {
+	return tea.Exec(a.NewExec(), func(err error) tea.Msg {
 		return agentBlurMsg{}
 	})
 }
@@ -531,10 +532,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = viewSessions
 
 			case "n":
-				// Launch a new claude agent in the claude directory and immediately
-				// focus it — full PTY passthrough to the real claude CLI.
+				// Launch a new claude agent in the current working directory and
+				// immediately focus it — full PTY passthrough to the real claude CLI.
 				if m.manager != nil {
-					newAgent, err := m.manager.Launch(m.claudeDir, []string{})
+					newAgent, err := m.manager.Launch(m.workDir, []string{})
 					if err == nil {
 						select {
 						case <-newAgent.Wait():

@@ -37,7 +37,7 @@ func renderTests(m Model) string {
 
 	var sb strings.Builder
 
-	// ── Summary line ─────────────────────────────────────────────────────────
+	// ── Summary bar ──────────────────────────────────────────────────────────
 	var watchIndicator string
 	if m.runner != nil && m.runner.IsWatching() {
 		watchIndicator = styleBusy.Render(frame(spinnerFrames, m.animFrame) + " watching")
@@ -48,9 +48,13 @@ func renderTests(m Model) string {
 	var lastRunStr string
 	if m.runnerResult != nil {
 		ago := time.Since(m.runnerResult.StartedAt)
-		lastRunStr = fmt.Sprintf("last run: %s ago", formatAge(ago))
+		if m.runnerResult.Failed {
+			lastRunStr = styleFail.Render("✗ failed") + styleDim.Render(fmt.Sprintf(" %s ago", formatAge(ago)))
+		} else {
+			lastRunStr = stylePass.Render("✓ pass") + styleDim.Render(fmt.Sprintf(" %s ago", formatAge(ago)))
+		}
 	} else {
-		lastRunStr = "no run yet"
+		lastRunStr = styleDim.Render("no run yet")
 	}
 
 	testCmd := "─"
@@ -64,9 +68,10 @@ func renderTests(m Model) string {
 		sectionLabel(truncate(m.testCWD, 40)),
 		styleDim.Render(truncate(testCmd, 24)),
 		watchIndicator,
-		styleDim.Render(lastRunStr),
+		lastRunStr,
 	)
-	sb.WriteString(summary + "\n\n")
+	sb.WriteString(summary + "\n")
+	sb.WriteString(styleDim.Render("  "+strings.Repeat("─", w-4)) + "\n\n")
 
 	// ── Directory input (shown when d is pressed) ────────────────────────────
 	if m.testChangingDir {
@@ -120,10 +125,17 @@ func renderTests(m Model) string {
 		sb.WriteString("\n")
 	}
 
+	// ── Footer hint ────────────────────────────────────────────────────────────
+	footerItems := []string{"r run", "w watch", "d change dir"}
+	var footerParts []string
+	for _, item := range footerItems {
+		footerParts = append(footerParts, styleDim.Render(item))
+	}
+	sb.WriteString("  " + strings.Join(footerParts, "  ·  ") + "\n")
+	sb.WriteString("\n")
+
 	// Keep w referenced to avoid "declared and not used" if the body shrinks.
 	_ = w
-
-	sb.WriteString("\n")
 
 	return sb.String()
 }
