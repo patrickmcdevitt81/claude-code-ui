@@ -10,12 +10,9 @@ import (
 )
 
 // renderTopBar returns the persistent single-row top bar spanning width columns.
-//
-// Layout (left → right):
-//
-//	◈  cockpit  /  claude-code  |  <model>  ···  ○ idle | $X today  N agents  M projects
+// At narrow widths it progressively drops lower-priority fields so the bar
+// always fits on a single line without wrapping.
 func renderTopBar(m Model, width int) string {
-	// Aggregate stats from model state.
 	totalCost := 0.0
 	for _, p := range m.projects {
 		totalCost += p.LastCost
@@ -41,46 +38,51 @@ func renderTopBar(m Model, width int) string {
 	muted := lipgloss.NewStyle().Foreground(colorTextMuted)
 	cost := lipgloss.NewStyle().Foreground(colorCost)
 
-	// Left segment: brand glyph · product · divider · recent model.
-	left := "  " +
-		accent.Render("◈") + "  " +
-		primary.Render("cockpit") +
-		muted.Render("  /  ") +
-		dim.Render("claude-code") +
-		"   " + muted.Render("|") + "   " +
-		dim.Render(recentModel)
+	// Left: brand · model (model dropped below 90 cols).
+	left := "  " + accent.Render("◈") + "  " + primary.Render("cockpit") +
+		muted.Render("  /  ") + dim.Render("claude-code")
+	if width >= 90 {
+		left += "   " + muted.Render("|") + "   " + dim.Render(truncate(recentModel, 20))
+	}
 
-	// Right segment: animated status pill · telemetry.
+	// Right: build from most- to least-important; drop fields as width shrinks.
 	var statusPill string
 	if busyCount > 0 {
-		dot := frame(pulseFrames, m.animFrame)
-		statusPill = accent.Render(dot+" executing") +
+		statusPill = accent.Render(frame(pulseFrames, m.animFrame)+" executing") +
 			muted.Render(fmt.Sprintf("  %d/%d", busyCount, agentCount))
 	} else {
 		statusPill = muted.Render("○  idle")
 	}
-	right := statusPill +
-		"   " + muted.Render("|") + "   " +
-		cost.Render(fmt.Sprintf("$%.2f today", totalCost)) +
-		"   " + dim.Render(fmt.Sprintf("%d agents", agentCount)) +
-		"   " + dim.Render(fmt.Sprintf("%d projects", len(m.projects))) +
-		"  "
 
-	// Fill the gap between left and right to reach full width.
+	right := statusPill + "   " + muted.Render("|") + "   " +
+		cost.Render(fmt.Sprintf("$%.2f", totalCost))
+	if width >= 110 {
+		right += "   " + dim.Render(fmt.Sprintf("%d agents", agentCount)) +
+			"   " + dim.Render(fmt.Sprintf("%d projects", len(m.projects)))
+	}
+	right += "  "
+
+	// Use width-1 as the content target: the outer Width(width) pads the last
+	// column, preventing the terminal EOL-wrap edge case on exact-width lines.
+	avail := width - 1
 	lw := lipgloss.Width(left)
 	rw := lipgloss.Width(right)
-	gap := width - lw - rw
+	gap := avail - lw - rw
 	if gap < 1 {
-		gap = 1
+		// Too tight — collapse right to just cost.
+		right = cost.Render(fmt.Sprintf("$%.2f", totalCost)) + " "
+		rw = lipgloss.Width(right)
+		gap = avail - lw - rw
+		if gap < 1 {
+			gap = 1
+		}
 	}
-	line := left + strings.Repeat(" ", gap) + right
 
+	line := left + strings.Repeat(" ", gap) + right
 	return lipgloss.NewStyle().Width(width).Background(colorPanel).Render(line)
 }
 
 // renderTabStrip returns the one-row tab strip spanning width columns.
-// The active view's tab is highlighted with the accent colour and a slightly
-// lighter background to match the web dashboard's "active tab" treatment.
 func renderTabStrip(m Model, width int) string {
 	type tab struct {
 		v     viewName
@@ -97,8 +99,7 @@ func renderTabStrip(m Model, width int) string {
 		Foreground(colorAccent).
 		Background(colorBorderActive).
 		Bold(true)
-	inactiveStyle := lipgloss.NewStyle().
-		Foreground(colorTextMuted)
+	inactiveStyle := lipgloss.NewStyle().Foreground(colorTextMuted)
 	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
 
 	var sb strings.Builder
@@ -119,8 +120,7 @@ func renderTabStrip(m Model, width int) string {
 }
 
 // renderStatusBar returns the persistent single-row bottom status bar.
-//
-// Layout:  ● cockpit.loop  agents N  projects M  $X  ·····  <claudeDir>  v<version>
+// At narrow widths the path is shortened or dropped so it fits on one line.
 func renderStatusBar(m Model, width int) string {
 	agentCount := 0
 	if m.manager != nil {
@@ -136,25 +136,43 @@ func renderStatusBar(m Model, width int) string {
 	muted := lipgloss.NewStyle().Foreground(colorTextMuted)
 	costStyle := lipgloss.NewStyle().Foreground(colorCost)
 
-	left := "  " +
-		accent.Render("●") + "  " +
-		muted.Render("cockpit.loop") +
-		"   " + dim.Render(fmt.Sprintf("agents %d", agentCount)) +
-		"   " + dim.Render(fmt.Sprintf("projects %d", len(m.projects))) +
-		"   " + costStyle.Render(fmt.Sprintf("$%.2f", totalCost))
+	left := "  " + accent.Render("●") + "  " + muted.Render("cockpit.loop")
+	if width >= 90 {
+		left += "   " + dim.Render(fmt.Sprintf("agents %d", agentCount))
+	}
+	if width >= 100 {
+		left += "   " + dim.Render(fmt.Sprintf("projects %d", len(m.projects)))
+	}
+	left += "   " + costStyle.Render(fmt.Sprintf("$%.2f", totalCost))
 
-	right := muted.Render(truncate(m.claudeDir, 28)) +
-		"   " + dim.Render("v"+build.Version) +
-		"  "
+	ver := dim.Render("v" + build.Version)
 
+	// Path length scales down with terminal width.
+	pathLen := 28
+	if width < 120 {
+		pathLen = 20
+	}
+	if width < 100 {
+		pathLen = 12
+	}
+	right := muted.Render(truncate(m.claudeDir, pathLen)) + "   " + ver + "  "
+
+	// Target width-1 to avoid terminal EOL-wrap on exact-width lines.
+	avail := width - 1
 	lw := lipgloss.Width(left)
 	rw := lipgloss.Width(right)
-	dotCount := width - lw - rw - 4
+	dotCount := avail - lw - rw - 4
+
+	// Doesn't fit — drop path, keep only version.
 	if dotCount < 3 {
-		dotCount = 3
+		right = ver + "  "
+		rw = lipgloss.Width(right)
+		dotCount = avail - lw - rw - 4
+	}
+	if dotCount < 1 {
+		dotCount = 1
 	}
 
 	line := left + "  " + muted.Render(strings.Repeat("·", dotCount)) + "  " + right
-
 	return lipgloss.NewStyle().Width(width).Background(colorPanel).Render(line)
 }

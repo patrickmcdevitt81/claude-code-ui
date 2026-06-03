@@ -214,21 +214,43 @@ func divider(w int) string {
 }
 
 // renderDashboard builds the dashboard body string for View().
-// The branded header, tab strip, and footer chrome are composed in model.View().
+// It is height-aware: sections stop rendering once the body is full so
+// higher-priority content (telemetry, logo, projects) is never displaced.
 func (m Model) renderDashboard() string {
 	w := m.width
 	if w < 60 {
 		w = 60
 	}
 
-	var sb strings.Builder
-
-	if m.loadErr != nil {
-		sb.WriteString(styleError.Render(fmt.Sprintf("  ! load error: %v", m.loadErr)))
-		sb.WriteString("\n")
+	// Available body rows = terminal height minus the 3 chrome rows.
+	bodyH := m.height - 3
+	if bodyH < 5 {
+		bodyH = 5
 	}
 
-	sb.WriteString("\n")
+	// rowBudget counts down; emit() returns false once full.
+	used := 0
+	type line struct{ s string }
+	var lines []line
+	emit := func(s string) bool {
+		if used >= bodyH {
+			return false
+		}
+		lines = append(lines, line{s})
+		used++
+		return true
+	}
+	// blank is a convenience wrapper for an empty line.
+	blank := func() bool { return emit("") }
+	// sec emits a full section divider + one blank below.
+	sec := func() {
+		emit(divider(w))
+	}
+
+	// ── Load error (if any) ───────────────────────────────────────────────────
+	if m.loadErr != nil {
+		emit(styleError.Render(fmt.Sprintf("  ! load error: %v", m.loadErr)))
+	}
 
 	// ── TELEMETRY row ─────────────────────────────────────────────────────────
 	var totalTokensIn, totalTokensOut int64
@@ -248,7 +270,6 @@ func (m Model) renderDashboard() string {
 			busyCountDash++
 		}
 	}
-
 	telRow := fmt.Sprintf("  %s   %s   %s   %s   %s",
 		sectionLabel("TELEMETRY"),
 		styleDim.Render("in:")+styleCyan.Render(formatTokens(totalTokensIn)),
@@ -256,9 +277,9 @@ func (m Model) renderDashboard() string {
 		styleDim.Render("cost:")+styleCost.Render(fmt.Sprintf("$%.2f", totalCostAll)),
 		styleDim.Render("agents:")+styleBusy.Render(fmt.Sprintf("%d/%d", busyCountDash, agentCount)),
 	)
-	sb.WriteString(telRow + "\n")
-	sb.WriteString(divider(w) + "\n")
-	sb.WriteString("\n")
+	emit(telRow)
+	sec()
+	blank()
 
 	// ── Claude "C" logo + ⚡ FOCUS NEXT panel ────────────────────────────────
 	logo := claudeLogo(m.animFrame)
@@ -301,14 +322,11 @@ func (m Model) renderDashboard() string {
 	}
 	logoCol := lipgloss.NewStyle().Width(logoW)
 	for i := 0; i < 5; i++ {
-		sb.WriteString(
-			lipgloss.JoinHorizontal(lipgloss.Top, logoCol.Render(logo[i]), "  "+pLines[i]) + "\n",
-		)
+		emit(lipgloss.JoinHorizontal(lipgloss.Top, logoCol.Render(logo[i]), "  "+pLines[i]))
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(divider(w) + "\n")
-	sb.WriteString("\n")
+	blank()
+	sec()
+	blank()
 
 	// ── PROJECTS + LIVE AGENTS (side by side) ─────────────────────────────────
 	halfW := (w - 4) / 2
@@ -325,8 +343,7 @@ func (m Model) renderDashboard() string {
 
 	var projectLines []string
 	projectLines = append(projectLines,
-		sectionLabel("  PROJECTS")+styleDim.Render("  cost   bar   7d ▸"),
-	)
+		sectionLabel("  PROJECTS")+styleDim.Render("  cost   bar   7d ▸"))
 	for _, p := range sorted {
 		name := truncate(projectShortName(p.Path), 12)
 		bar := styleAmber.Render(costBar(p.LastCost, maxCost))
@@ -334,8 +351,7 @@ func (m Model) renderDashboard() string {
 		daily := projectDailyCosts(p.Path, m.allSessions, 7)
 		spark := styleCyan.Render(renderSparkline(daily, 7))
 		projectLines = append(projectLines,
-			fmt.Sprintf("  %-12s  %s  %s  %s",
-				name, styleCost.Render(rawCost), bar, spark))
+			fmt.Sprintf("  %-12s  %s  %s  %s", name, styleCost.Render(rawCost), bar, spark))
 	}
 	if len(sorted) == 0 {
 		projectLines = append(projectLines, styleDim.Render("  (no projects)"))
@@ -359,97 +375,109 @@ func (m Model) renderDashboard() string {
 		if label == "" {
 			label = fmt.Sprintf("pid/%d", proc.PID)
 		}
-		label = truncate(label, 12)
-		liveLines = append(liveLines, fmt.Sprintf("  %s  %-12s  %s", indicator, label, statusStr))
+		liveLines = append(liveLines,
+			fmt.Sprintf("  %s  %-12s  %s", indicator, truncate(label, 12), statusStr))
 	}
 
-	maxRows := len(projectLines)
-	if len(liveLines) > maxRows {
-		maxRows = len(liveLines)
+	nRows := len(projectLines)
+	if len(liveLines) > nRows {
+		nRows = len(liveLines)
 	}
 	leftStyle := lipgloss.NewStyle().Width(halfW)
-	for i := 0; i < maxRows; i++ {
-		left, right := "", ""
+	for i := 0; i < nRows; i++ {
+		lft, rgt := "", ""
 		if i < len(projectLines) {
-			left = projectLines[i]
+			lft = projectLines[i]
 		}
 		if i < len(liveLines) {
-			right = liveLines[i]
+			rgt = liveLines[i]
 		}
-		sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftStyle.Render(left), "  "+right) + "\n")
+		if !emit(lipgloss.JoinHorizontal(lipgloss.Top, leftStyle.Render(lft), "  "+rgt)) {
+			goto done
+		}
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(divider(w) + "\n")
-	sb.WriteString("\n")
+	blank()
+	sec()
+	blank()
 
 	// ── RECENT SESSIONS ───────────────────────────────────────────────────────
-	sb.WriteString(sectionLabel("  RECENT SESSIONS") +
-		styleDim.Render(fmt.Sprintf("  %d total · press 4 for all", len(m.allSessions))) + "\n")
-	sessions := make([]store.Session, len(m.sessions))
-	copy(sessions, m.sessions)
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
-	})
-	if len(sessions) > 5 {
-		sessions = sessions[:5]
-	}
-	if len(sessions) == 0 {
-		sb.WriteString(styleDim.Render("  (no sessions)") + "\n")
-	}
-	for _, s := range sessions {
-		proj := truncate(projectShortName(s.ProjectPath), 12)
-		ts := s.UpdatedAt.Format("Jan 02 15:04")
-		modelStr := truncate(s.Model, 20)
-		costRaw := fmt.Sprintf("$%.2f", s.CostUSD)
-		recency := ""
-		if time.Since(s.UpdatedAt) < 10*time.Minute {
-			recency = "  " + styleBusy.Render("● active")
+	emit(sectionLabel("  RECENT SESSIONS") +
+		styleDim.Render(fmt.Sprintf("  %d total · press 4 for all", len(m.allSessions))))
+	{
+		sessions := make([]store.Session, len(m.sessions))
+		copy(sessions, m.sessions)
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
+		})
+		if len(sessions) > 5 {
+			sessions = sessions[:5]
 		}
-		sb.WriteString(fmt.Sprintf("  %-12s  %s  %-20s  %s  %d edits%s\n",
-			proj, styleDim.Render(ts), styleDim.Render(modelStr),
-			styleCost.Render(costRaw), s.EditCount, recency))
+		if len(sessions) == 0 {
+			emit(styleDim.Render("  (no sessions)"))
+		}
+		for _, s := range sessions {
+			proj := truncate(projectShortName(s.ProjectPath), 12)
+			ts := s.UpdatedAt.Format("Jan 02 15:04")
+			modelStr := truncate(s.Model, 20)
+			costRaw := fmt.Sprintf("$%.2f", s.CostUSD)
+			recency := ""
+			if time.Since(s.UpdatedAt) < 10*time.Minute {
+				recency = "  " + styleBusy.Render("● active")
+			}
+			if !emit(fmt.Sprintf("  %-12s  %s  %-20s  %s  %d edits%s",
+				proj, styleDim.Render(ts), styleDim.Render(modelStr),
+				styleCost.Render(costRaw), s.EditCount, recency)) {
+				goto done
+			}
+		}
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(divider(w) + "\n")
-	sb.WriteString("\n")
+	blank()
+	sec()
+	blank()
 
 	// ── RECENT COMMANDS ───────────────────────────────────────────────────────
-	sb.WriteString(sectionLabel("  RECENT COMMANDS") + styleDim.Render(" (last 10)") + "\n")
+	emit(sectionLabel("  RECENT COMMANDS") + styleDim.Render(" (last 10)"))
 	if len(m.history) == 0 {
-		sb.WriteString(styleDim.Render("  (no history)") + "\n")
+		emit(styleDim.Render("  (no history)"))
 	}
 	for _, h := range m.history {
 		ts := h.Timestamp.Format("Jan 02 15:04")
 		proj := truncate(h.Project, 12)
 		display := truncate(h.Display, w-40)
-		sb.WriteString(fmt.Sprintf("  %s  %-12s  %s\n",
-			styleDim.Render(ts), proj, display))
+		if !emit(fmt.Sprintf("  %s  %-12s  %s", styleDim.Render(ts), proj, display)) {
+			goto done
+		}
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(divider(w) + "\n")
-	sb.WriteString("\n")
+	blank()
+	sec()
+	blank()
 
 	// ── ISSUES ────────────────────────────────────────────────────────────────
-	issues := m.buildIssues(5)
-	issueHeader := sectionLabel(fmt.Sprintf("  ISSUES (%d)", len(issues)))
-	if len(issues) == 0 {
-		issueHeader += "  " + styleMint.Render("✓ all clear")
-	}
-	sb.WriteString(issueHeader + "\n")
-	for _, iss := range issues {
-		sb.WriteString(fmt.Sprintf("  %s  %-12s  %-30s  %-8s  %s\n",
-			styleError.Render(iss.icon),
-			styleDim.Render(iss.kind),
-			truncate(iss.message, w-54),
-			truncate(iss.project, 8),
-			styleDim.Render(iss.timeStr)))
+	{
+		issues := m.buildIssues(5)
+		issueHeader := sectionLabel(fmt.Sprintf("  ISSUES (%d)", len(issues)))
+		if len(issues) == 0 {
+			issueHeader += "  " + styleMint.Render("✓ all clear")
+		}
+		emit(issueHeader)
+		for _, iss := range issues {
+			if !emit(fmt.Sprintf("  %s  %-12s  %-30s  %-8s  %s",
+				styleError.Render(iss.icon),
+				styleDim.Render(iss.kind),
+				truncate(iss.message, w-54),
+				truncate(iss.project, 8),
+				styleDim.Render(iss.timeStr))) {
+				goto done
+			}
+		}
+		blank()
 	}
 
-	sb.WriteString("\n")
-
+done:
+	var sb strings.Builder
+	for _, l := range lines {
+		sb.WriteString(l.s + "\n")
+	}
 	return sb.String()
 }
 
