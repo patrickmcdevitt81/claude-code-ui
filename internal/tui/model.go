@@ -74,6 +74,7 @@ type Model struct {
 	projects  []store.ProjectSummary
 	sessions  []store.Session      // recent sessions, sorted newest-first, max 10
 	processes []store.LiveProcess
+	tasks     map[string][]store.TaskItem // keyed by sessionID; nil-safe
 	history   []store.HistoryEntry // last 20
 	loadErr   error
 
@@ -120,6 +121,7 @@ func New(claudePath, claudeDir, workDir string, mgr *agent.Manager) Model {
 		testCWD:      workDir,
 		testDirInput: dirInput,
 		sessionInput: sessionIn,
+		tasks:        make(map[string][]store.TaskItem),
 	}
 
 	// Create runner with testCWD. The onResult callback is a no-op here
@@ -172,6 +174,13 @@ func (m *Model) refreshData() {
 		firstErr = err
 	}
 	m.processes = processes
+
+	allTasks, _ := store.ReadTaskItems(m.claudeDir)
+	taskMap := make(map[string][]store.TaskItem)
+	for _, t := range allTasks {
+		taskMap[t.SessionID] = append(taskMap[t.SessionID], t)
+	}
+	m.tasks = taskMap
 
 	history, err := store.ReadHistory(m.claudeDir, 20)
 	if err != nil && firstErr == nil {
@@ -367,37 +376,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case "down", "j":
-				// +1 for the [new] row; max valid index is len(agents)
-				agentMax := 0
-				if m.manager != nil {
-					agentMax = len(m.manager.List())
-				}
+				// +1 for the [new] row; max valid index is len(processes)+len(ptyAgents)
+				ptyAgents := sortedAgents(m.manager.List())
+				agentMax := len(m.processes) + len(ptyAgents)
 				if m.selectedAgentIdx < agentMax {
 					m.selectedAgentIdx++
 				}
 
 			case "f", "enter":
-				if m.manager != nil {
-					agents := sortedAgents(m.manager.List())
-					if m.selectedAgentIdx < len(agents) {
-						id := agents[m.selectedAgentIdx].ID
-						m.focusedID = id
-						return m, m.focusAgent(id)
-					}
+				// Only focus PTY agents (indices >= len(m.processes)).
+				ptyAgents := sortedAgents(m.manager.List())
+				ptyIdx := m.selectedAgentIdx - len(m.processes)
+				if m.manager != nil && ptyIdx >= 0 && ptyIdx < len(ptyAgents) {
+					id := ptyAgents[ptyIdx].ID
+					m.focusedID = id
+					return m, m.focusAgent(id)
 				}
 
 			case "K", "ctrl+k":
-				// Kill selected agent (no confirmation).
-				if m.manager != nil {
-					agents := sortedAgents(m.manager.List())
-					if m.selectedAgentIdx < len(agents) {
-						id := agents[m.selectedAgentIdx].ID
-						_ = m.manager.Kill(id)
-						// Clamp selection to the new list length.
-						remaining := sortedAgents(m.manager.List())
-						if m.selectedAgentIdx >= len(remaining) && m.selectedAgentIdx > 0 {
-							m.selectedAgentIdx = len(remaining) - 1
-						}
+				// Kill selected PTY agent (no confirmation).
+				ptyAgents := sortedAgents(m.manager.List())
+				ptyIdx := m.selectedAgentIdx - len(m.processes)
+				if m.manager != nil && ptyIdx >= 0 && ptyIdx < len(ptyAgents) {
+					id := ptyAgents[ptyIdx].ID
+					_ = m.manager.Kill(id)
+					// Clamp selection to the new list length.
+					remaining := sortedAgents(m.manager.List())
+					newMax := len(m.processes) + len(remaining)
+					if m.selectedAgentIdx >= newMax && m.selectedAgentIdx > 0 {
+						m.selectedAgentIdx = newMax - 1
 					}
 				}
 

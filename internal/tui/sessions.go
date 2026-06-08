@@ -170,6 +170,31 @@ func renderSessions(m Model) string {
 			sb.WriteString(line + "\n")
 		}
 
+		// Active tasks for this session.
+		if tasks, ok := m.tasks[s.SessionID]; ok {
+			active := 0
+			for _, t := range tasks {
+				if t.Status == "in_progress" || t.Status == "pending" {
+					active++
+				}
+			}
+			if active > 0 {
+				sb.WriteString("\n")
+				sb.WriteString(sectionLabel("  TASKS:") + "\n")
+				for _, t := range tasks {
+					if t.Status == "completed" || t.Status == "deleted" {
+						continue
+					}
+					icon := styleDim.Render("◦")
+					if t.Status == "in_progress" {
+						icon = styleBusy.Render("●")
+					}
+					sb.WriteString(fmt.Sprintf("  %s  %-10s  %s\n",
+						icon, styleDim.Render(t.Status), truncate(t.Subject, w-28)))
+				}
+			}
+		}
+
 		// Error count summary.
 		if s.ErrorCount > 0 {
 			sb.WriteString("\n")

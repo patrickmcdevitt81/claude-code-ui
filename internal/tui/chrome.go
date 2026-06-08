@@ -17,10 +17,7 @@ func renderTopBar(m Model, width int) string {
 	for _, p := range m.projects {
 		totalCost += p.LastCost
 	}
-	agentCount := 0
-	if m.manager != nil {
-		agentCount = len(m.manager.List())
-	}
+	agentCount := len(m.processes)
 	busyCount := 0
 	for _, p := range m.processes {
 		if p.Status == "busy" {
@@ -122,10 +119,7 @@ func renderTabStrip(m Model, width int) string {
 // renderStatusBar returns the persistent single-row bottom status bar.
 // At narrow widths the path is shortened or dropped so it fits on one line.
 func renderStatusBar(m Model, width int) string {
-	agentCount := 0
-	if m.manager != nil {
-		agentCount = len(m.manager.List())
-	}
+	agentCount := len(m.processes)
 	totalCost := 0.0
 	for _, p := range m.projects {
 		totalCost += p.LastCost

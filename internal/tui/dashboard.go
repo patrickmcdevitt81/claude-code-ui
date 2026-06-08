@@ -163,11 +163,7 @@ func (m Model) buildPriorityItems() []priorityItem {
 	}
 
 	// 3. No agents running but recent work exists — medium.
-	agentCount := 0
-	if m.manager != nil {
-		agentCount = len(m.manager.List())
-	}
-	if agentCount == 0 && len(m.sessions) > 0 {
+	if len(m.processes) == 0 && len(m.sessions) > 0 {
 		s := m.sessions[0]
 		items = append(items, priorityItem{
 			urgency: 1, icon: "→",
@@ -177,7 +173,7 @@ func (m Model) buildPriorityItems() []priorityItem {
 	}
 
 	// 4. Tests not run while agents are active — medium.
-	if m.runnerResult == nil && agentCount > 0 {
+	if m.runnerResult == nil && len(m.processes) > 0 {
 		items = append(items, priorityItem{
 			urgency: 1, icon: "⚑",
 			action: "Run tests to verify agent work",
@@ -260,16 +256,13 @@ func (m Model) renderDashboard() string {
 		totalTokensOut += s.TotalOutputTokens
 		totalCostAll += s.CostUSD
 	}
-	agentCount := 0
 	busyCountDash := 0
-	if m.manager != nil {
-		agentCount = len(m.manager.List())
-	}
 	for _, p := range m.processes {
 		if p.Status == "busy" {
 			busyCountDash++
 		}
 	}
+	agentCount := len(m.processes)
 	telRow := fmt.Sprintf("  %s   %s   %s   %s   %s",
 		sectionLabel("TELEMETRY"),
 		styleDim.Render("in:")+styleCyan.Render(formatTokens(totalTokensIn)),
@@ -363,20 +356,27 @@ func (m Model) renderDashboard() string {
 		liveLines = append(liveLines, styleDim.Render("  (no agents running)"))
 	}
 	for _, proc := range m.processes {
-		var indicator, statusStr string
+		var indicator string
 		if proc.Status == "busy" {
 			indicator = styleBusy.Render(frame(spinnerFrames, m.animFrame))
-			statusStr = styleBusy.Render("busy")
 		} else {
 			indicator = styleIdle.Render("○")
-			statusStr = styleDim.Render("idle")
 		}
-		label := proc.SessionID
-		if label == "" {
-			label = fmt.Sprintf("pid/%d", proc.PID)
+		cwdBase := filepath.Base(proc.CWD)
+		if cwdBase == "" || cwdBase == "." {
+			cwdBase = proc.CWD
+		}
+		uptime := processUptime(proc)
+		costStr := "─"
+		for _, s := range m.allSessions {
+			if s.SessionID == proc.SessionID {
+				costStr = fmt.Sprintf("$%.2f", s.CostUSD)
+				break
+			}
 		}
 		liveLines = append(liveLines,
-			fmt.Sprintf("  %s  %-12s  %s", indicator, truncate(label, 12), statusStr))
+			fmt.Sprintf("  %s  %-14s  %-5s  %s",
+				indicator, truncate(cwdBase, 14), uptime, styleCost.Render(costStr)))
 	}
 
 	nRows := len(projectLines)
@@ -399,6 +399,31 @@ func (m Model) renderDashboard() string {
 	blank()
 	sec()
 	blank()
+
+	// ── ACTIVE TASKS ──────────────────────────────────────────────────────────
+	{
+		activeTasks := m.buildActiveTasks(5)
+		taskHdr := sectionLabel("  ACTIVE TASKS")
+		if len(activeTasks) == 0 {
+			taskHdr += "  " + styleDim.Render("(none)")
+		}
+		if !emit(taskHdr) {
+			goto done
+		}
+		for _, t := range activeTasks {
+			icon := styleDim.Render("◦")
+			if t.status == "in_progress" {
+				icon = styleBusy.Render(frame(spinnerFrames, m.animFrame))
+			}
+			if !emit(fmt.Sprintf("  %s  %-22s  %s",
+				icon, truncate(t.subject, 22), styleDim.Render(filepath.Base(t.cwdHint)))) {
+				goto done
+			}
+		}
+		blank()
+		sec()
+		blank()
+	}
 
 	// ── RECENT SESSIONS ───────────────────────────────────────────────────────
 	emit(sectionLabel("  RECENT SESSIONS") +
@@ -479,6 +504,65 @@ done:
 		sb.WriteString(l.s + "\n")
 	}
 	return sb.String()
+}
+
+// activeTaskEntry is a task shown in the dashboard ACTIVE TASKS section.
+type activeTaskEntry struct {
+	subject string
+	status  string
+	cwdHint string // project CWD or session ID prefix as fallback
+}
+
+// buildActiveTasks returns up to max in_progress and pending tasks across all
+// sessions, in_progress first.
+func (m Model) buildActiveTasks(max int) []activeTaskEntry {
+	var inProg, pending []activeTaskEntry
+	for sid, tasks := range m.tasks {
+		cwdHint := sid
+		for _, p := range m.processes {
+			if p.SessionID == sid {
+				cwdHint = p.CWD
+				break
+			}
+		}
+		if cwdHint == sid {
+			for _, s := range m.allSessions {
+				if s.SessionID == sid {
+					cwdHint = s.ProjectPath
+					break
+				}
+			}
+		}
+		for _, t := range tasks {
+			switch t.Status {
+			case "in_progress":
+				inProg = append(inProg, activeTaskEntry{t.Subject, t.Status, cwdHint})
+			case "pending":
+				pending = append(pending, activeTaskEntry{t.Subject, t.Status, cwdHint})
+			}
+		}
+	}
+	result := append(inProg, pending...)
+	if len(result) > max {
+		result = result[:max]
+	}
+	return result
+}
+
+// processUptime returns a short human-readable uptime for a live process.
+func processUptime(p store.LiveProcess) string {
+	if p.StartedAt.IsZero() {
+		return "─"
+	}
+	d := time.Since(p.StartedAt)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
 }
 
 // buildIssues aggregates issues from recent sessions and the security log.
